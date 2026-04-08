@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>はしれ！経理さん！</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap');
+  :root {
+    --blue:#285ac8; --lb:#73a5ff; --bg:#eef4ff; --dark:#1a2a5e;
+    --red:#e84040; --yellow:#ffc740;
+  }
+  *{margin:0;padding:0;box-sizing:border-box;touch-action:manipulation;}
+  body{
+    background:linear-gradient(150deg,#dce8ff,#eef4ff);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    min-height:100dvh;font-family:'Noto Sans JP',sans-serif;
+    overflow:hidden;user-select:none;
+  }
+  #title-bar{text-align:center;margin-bottom:4px;}
+  #title-bar h1{font-weight:900;font-size:clamp(13px,3.8vw,20px);color:var(--blue);letter-spacing:1px;}
+  #title-bar h1 span{color:var(--lb);}
+  #hud{display:flex;gap:14px;margin-bottom:4px;font-size:clamp(10px,2.4vw,13px);color:var(--dark);flex-wrap:wrap;justify-content:center;}
+  #hud .val{color:var(--blue);font-weight:700;}
+  #game-container{position:relative;border-radius:14px;overflow:hidden;
+    box-shadow:0 8px 32px rgba(40,90,200,0.2);border:2.5px solid var(--lb);
+    width:min(720px,98vw);}
+  canvas{display:block;width:100%;height:auto;}
+  #overlay{position:absolute;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;
+    background:rgba(238,244,255,0.93);gap:10px;
+    transition:opacity 0.25s;backdrop-filter:blur(3px);}
+  #overlay.hidden{opacity:0;pointer-events:none;}
+  .ov-title{font-weight:900;font-size:clamp(17px,4.5vw,26px);color:var(--blue);}
+  .ov-sub{font-size:clamp(10px,2.4vw,13px);color:#555;text-align:center;line-height:2;}
+  .ov-btn{background:var(--blue);color:#fff;border:none;padding:11px 32px;
+    border-radius:999px;font-family:inherit;font-weight:700;
+    font-size:clamp(13px,3vw,16px);cursor:pointer;box-shadow:0 4px 14px rgba(40,90,200,0.3);}
+  .ov-btn:active{opacity:0.85;}
+  #touch-hint{margin-top:4px;font-size:clamp(9px,2vw,11px);color:#aaa;text-align:center;}
+</style>
+</head>
+<body>
+<div id="title-bar"><h1>🏃 はしれ！<span>経理さん</span>！</h1></div>
+<div id="hud">
+  <div>⭐ <span class="val" id="score">0</span> pt</div>
+  <div>🏆 ベスト <span class="val" id="best">0</span> pt</div>
+  <div>🧾 領収書 <span class="val" id="collected">0</span> 枚</div>
+  <div>速度 <span class="val" id="spd">×1.0</span></div>
+</div>
+<div id="game-container">
+  <canvas id="c" width="720" height="420"></canvas>
+  <div id="overlay">
+    <div class="ov-title">🏃 はしれ！経理さん！</div>
+    <div class="ov-sub">✨ 光る領収書を集めながら<br>🚧 障害物を避けろ！</div>
+    <button class="ov-btn" id="start-btn">スタート！</button>
+    <div class="ov-sub" style="font-size:clamp(9px,2vw,11px);color:#aaa">
+      タップ / スペース = ジャンプ（2段可）<br>長押し / ↓ = しゃがむ
+    </div>
+  </div>
+</div>
+<div id="touch-hint">📱 タップ = ジャンプ &nbsp;|&nbsp; 長押し = しゃがむ</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const W = 720, H = 420;
+const GROUND = H - 40;
+
+// ===== STATE =====
+let state = 'idle';
+let score = 0, best = 0, frame = 0, collected = 0;
+let speedMult = 1, baseSpeed = 4.2, speed = 4.2;
+
+// ===== CHARACTER =====
+const keiri = {
+  x:88, y:GROUND, w:34, h:66,
+  vy:0, onGround:true, ducking:false,
+  legPhase:0, jumpCount:0,
+  blinkTimer:0, blinking:false,
+};
+const GRAVITY=0.72, JUMP_FORCE=-15.5;
+
+function jump(){
+  if(keiri.jumpCount<2){
+    keiri.vy=JUMP_FORCE; keiri.onGround=false; keiri.jumpCount++;
+  }
+}
+function duck(on){
+  keiri.ducking=on;
+  keiri.h=on?38:66;
+}
+
+// ===== DRAW CHARACTER =====
+function drawKeiri(){
+  const kx=keiri.x;
+  const ky=keiri.y-keiri.h;
+  const bob=(keiri.onGround&&!keiri.ducking)?Math.sin(frame*0.28)*1.8:0;
+  const ty=ky+bob;
+  const D=keiri.ducking, J=!keiri.onGround;
+
+  ctx.save();
+
+  // ---- 共通パーツ関数 ----
+  function head(hx,hy,tilt=0){
+    ctx.save(); ctx.translate(hx,hy); ctx.rotate(tilt);
+    // 首
+    ctx.fillStyle='#f5c9a0';
+    ctx.beginPath(); ctx.roundRect(-5,8,10,10,2); ctx.fill();
+    // 顔
+    ctx.fillStyle='#fce0c0';
+    ctx.beginPath(); ctx.ellipse(0,0,13,14,0,0,Math.PI*2); ctx.fill();
+    // 耳
+    ctx.fillStyle='#f5c9a0';
+    ctx.beginPath(); ctx.ellipse(-13,2,3,5,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(13,2,3,5,0,0,Math.PI*2); ctx.fill();
+    // ---- 髪（ボブ）----
+    ctx.fillStyle='#3a2010';
+    // 前髪
+    ctx.beginPath(); ctx.ellipse(0,-10,13,6,0,Math.PI,Math.PI*2); ctx.fill();
+    // サイド左
+    ctx.beginPath(); ctx.ellipse(-12,1,5,12,-0.15,0,Math.PI*2); ctx.fill();
+    // サイド右
+    ctx.beginPath(); ctx.ellipse(12,1,5,12,0.15,0,Math.PI*2); ctx.fill();
+    // 後ろ（ボブの丸み）
+    ctx.beginPath(); ctx.ellipse(0,4,14,13,0,0,Math.PI*2); ctx.fill();
+    // 顔を再描画（髪の上から）
+    ctx.fillStyle='#fce0c0';
+    ctx.beginPath(); ctx.ellipse(0,1,11,11,0,0,Math.PI*2); ctx.fill();
+    // ---- メガネ ----
+    ctx.strokeStyle='#285ac8'; ctx.lineWidth=1.8;
+    // 左レンズ
+    ctx.beginPath(); ctx.roundRect(-11,-2,9,7,2); ctx.stroke();
+    // 右レンズ
+    ctx.beginPath(); ctx.roundRect(2,-2,9,7,2); ctx.stroke();
+    // ブリッジ
+    ctx.beginPath(); ctx.moveTo(-2,1); ctx.lineTo(2,1); ctx.stroke();
+    // テンプル
+    ctx.beginPath(); ctx.moveTo(-11,1); ctx.lineTo(-14,1); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(11,1); ctx.lineTo(14,1); ctx.stroke();
+    // ---- 目 ----
+    if(!keiri.blinking){
+      ctx.fillStyle='#2a1a0a';
+      ctx.beginPath(); ctx.arc(-6,1,2,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6,1,2,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(-5.2,0.3,0.7,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(6.8,0.3,0.7,0,Math.PI*2); ctx.fill();
+    } else {
+      ctx.strokeStyle='#2a1a0a'; ctx.lineWidth=1.4;
+      ctx.beginPath(); ctx.moveTo(-9,1); ctx.lineTo(-3,1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(3,1); ctx.lineTo(9,1); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // ---- 制服（紺ジャケット＋白シャツ＋スカーフ）----
+  function uniform(bx,by,bw,bh){
+    // ジャケット本体
+    ctx.fillStyle='#2d4a8a';
+    ctx.beginPath(); ctx.roundRect(bx,by,bw,bh,4); ctx.fill();
+    // 白シャツ（内側）
+    ctx.fillStyle='#f0f4ff';
+    ctx.beginPath(); ctx.roundRect(bx+bw*0.28,by+2,bw*0.44,bh-4,2); ctx.fill();
+    // スカーフ（アクセント）
+    ctx.fillStyle='#73a5ff';
+    ctx.beginPath();
+    ctx.moveTo(bx+bw*0.4,by+2); ctx.lineTo(bx+bw*0.6,by+2);
+    ctx.lineTo(bx+bw*0.52,by+14); ctx.lineTo(bx+bw*0.5,by+18);
+    ctx.lineTo(bx+bw*0.48,by+14); ctx.closePath(); ctx.fill();
+    // ジャケットのラペル
+    ctx.fillStyle='#2d4a8a';
+    ctx.beginPath();
+    ctx.moveTo(bx,by); ctx.lineTo(bx+bw*0.38,by+2);
+    ctx.lineTo(bx+bw*0.32,by+bh*0.4); ctx.lineTo(bx,by+bh*0.3); ctx.closePath(); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(bx+bw,by); ctx.lineTo(bx+bw*0.62,by+2);
+    ctx.lineTo(bx+bw*0.68,by+bh*0.4); ctx.lineTo(bx+bw,by+bh*0.3); ctx.closePath(); ctx.fill();
+    // ポケットチーフ（小）
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.roundRect(bx+4,by+6,6,5,1); ctx.fill();
+  }
+
+  if(D){
+    // ===== しゃがみ（お辞儀）=====
+    // 脚（折りたたみ）
+    ctx.fillStyle='#1e3370';
+    ctx.beginPath(); ctx.roundRect(kx+4,GROUND-16,11,18,2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(kx+19,GROUND-16,11,18,2); ctx.fill();
+    // 靴
+    ctx.fillStyle='#1a1a1a';
+    ctx.beginPath(); ctx.roundRect(kx+2,GROUND-4,16,6,2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(kx+17,GROUND-4,16,6,2); ctx.fill();
+    // 体（前傾）
+    uniform(kx+2,GROUND-32,30,18);
+    // 頭（前傾）
+    head(kx+32,GROUND-34,0.45);
+  } else if(J){
+    // ===== ジャンプ（バンザイ）=====
+    // 脚（跳ね上げ）
+    ctx.fillStyle='#1e3370';
+    ctx.save(); ctx.translate(kx+11,ty+52); ctx.rotate(0.38);
+    ctx.beginPath(); ctx.roundRect(-5,0,11,16,2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+23,ty+52); ctx.rotate(-0.38);
+    ctx.beginPath(); ctx.roundRect(-5,0,11,16,2); ctx.fill(); ctx.restore();
+    // 靴
+    ctx.fillStyle='#1a1a1a';
+    ctx.save(); ctx.translate(kx+11,ty+52); ctx.rotate(0.38);
+    ctx.beginPath(); ctx.roundRect(-7,15,16,6,2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+23,ty+52); ctx.rotate(-0.38);
+    ctx.beginPath(); ctx.roundRect(-7,15,16,6,2); ctx.fill(); ctx.restore();
+    // 体
+    uniform(kx+2,ty+20,30,30);
+    // 腕（バンザイ）
+    ctx.fillStyle='#2d4a8a';
+    ctx.save(); ctx.translate(kx+2,ty+24); ctx.rotate(-1.05);
+    ctx.beginPath(); ctx.roundRect(-4,0,9,17,3); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+32,ty+24); ctx.rotate(1.05);
+    ctx.beginPath(); ctx.roundRect(-4,0,9,17,3); ctx.fill(); ctx.restore();
+    // 手
+    ctx.fillStyle='#fce0c0';
+    ctx.save(); ctx.translate(kx+2,ty+24); ctx.rotate(-1.05);
+    ctx.beginPath(); ctx.arc(0,-1,5,0,Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+32,ty+24); ctx.rotate(1.05);
+    ctx.beginPath(); ctx.arc(0,-1,5,0,Math.PI*2); ctx.fill(); ctx.restore();
+    // 頭
+    head(kx+17,ty+10,0);
+  } else {
+    // ===== 走る =====
+    const lp=keiri.legPhase;
+    const l1=Math.sin(lp*0.32)*12;
+    const l2=Math.sin(lp*0.32+Math.PI)*12;
+    const a1=Math.sin(lp*0.32+Math.PI)*0.38;
+    const a2=Math.sin(lp*0.32)*0.38;
+    // スカート（Aライン）
+    ctx.fillStyle='#1e3370';
+    ctx.beginPath();
+    ctx.moveTo(kx+6,ty+50); ctx.lineTo(kx+28,ty+50);
+    ctx.lineTo(kx+34,ty+64); ctx.lineTo(kx,ty+64);
+    ctx.closePath(); ctx.fill();
+    // 脚
+    ctx.fillStyle='#f5c9a0'; // 肌色ストッキング風
+    ctx.save(); ctx.translate(kx+11,ty+63); ctx.rotate(l1*0.035);
+    ctx.beginPath(); ctx.roundRect(-5,0,10,16,2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+23,ty+63); ctx.rotate(l2*0.035);
+    ctx.beginPath(); ctx.roundRect(-5,0,10,16,2); ctx.fill(); ctx.restore();
+    // 靴（ヒール）
+    ctx.fillStyle='#1a1a1a';
+    ctx.save(); ctx.translate(kx+11,ty+63); ctx.rotate(l1*0.035);
+    ctx.beginPath(); ctx.roundRect(-6,14,13,6,2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(4,18,3,5,1); ctx.fill(); // ヒール
+    ctx.restore();
+    ctx.save(); ctx.translate(kx+23,ty+63); ctx.rotate(l2*0.035);
+    ctx.beginPath(); ctx.roundRect(-6,14,13,6,2); ctx.fill();
+    ctx.beginPath(); ctx.roundRect(4,18,3,5,1); ctx.fill();
+    ctx.restore();
+    // 体（制服）
+    uniform(kx+2,ty+20,30,32);
+    // 腕
+    ctx.fillStyle='#2d4a8a';
+    ctx.save(); ctx.translate(kx+2,ty+24); ctx.rotate(a1);
+    ctx.beginPath(); ctx.roundRect(-4,0,9,17,3); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+32,ty+24); ctx.rotate(a2);
+    ctx.beginPath(); ctx.roundRect(-5,0,9,17,3); ctx.fill(); ctx.restore();
+    // 手
+    ctx.fillStyle='#fce0c0';
+    ctx.save(); ctx.translate(kx+2,ty+24); ctx.rotate(a1);
+    ctx.beginPath(); ctx.arc(0,18,4.5,0,Math.PI*2); ctx.fill(); ctx.restore();
+    ctx.save(); ctx.translate(kx+32,ty+24); ctx.rotate(a2);
+    ctx.beginPath(); ctx.arc(0,18,4.5,0,Math.PI*2); ctx.fill(); ctx.restore();
+    // 頭
+    head(kx+17,ty+10,0);
+    // キラン（定期的）
+    if(frame%90<10){
+      const a=1-(frame%90)/10;
+      ctx.globalAlpha=a;
+      ctx.fillStyle='#ffe566';
+      const sparks=[[kx+36,ty+2],[kx+40,ty+10],[kx+34,ty+18]];
+      sparks.forEach(([sx,sy])=>{
+        ctx.save(); ctx.translate(sx,sy); ctx.rotate(frame*0.3);
+        ctx.beginPath();
+        for(let i=0;i<4;i++){
+          const ang=i*Math.PI/2;
+          i===0?ctx.moveTo(Math.cos(ang)*5,Math.sin(ang)*5):ctx.lineTo(Math.cos(ang)*5,Math.sin(ang)*5);
+          const a2=ang+Math.PI/4;
+          ctx.lineTo(Math.cos(a2)*2,Math.sin(a2)*2);
+        }
+        ctx.closePath(); ctx.fill(); ctx.restore();
+      });
+      ctx.globalAlpha=1;
+    }
+  }
+  ctx.restore();
+}
+
+// ===== RECEIPTS =====
+let receipts=[], nextReceiptDist=160;
+function spawnReceipt(){
+  const yVars=[0,28,54];
+  const yOff=yVars[Math.floor(Math.random()*yVars.length)];
+  receipts.push({x:W+10,y:GROUND-8-yOff,r:12,collected:false,pulse:Math.random()*Math.PI*2});
+}
+
+// ===== OBSTACLES (シンプル3種) =====
+// 1. コーン（工事用）
+// 2. 段ボール箱
+// 3. 飛んでくる鳥
+const OBS_TYPES=[
+  {
+    id:'cone',label:'コーン',w:28,h:38,ground:true,
+    draw(x,y){
+      // コーン本体
+      ctx.fillStyle='#ff6b00';
+      ctx.beginPath();
+      ctx.moveTo(x+14,y-this.h); ctx.lineTo(x+28,y); ctx.lineTo(x,y); ctx.closePath(); ctx.fill();
+      // 白ライン
+      ctx.fillStyle='#fff';
+      ctx.beginPath();
+      ctx.moveTo(x+8,y-this.h*0.35); ctx.lineTo(x+20,y-this.h*0.35);
+      ctx.lineTo(x+22,y-this.h*0.22); ctx.lineTo(x+6,y-this.h*0.22);
+      ctx.closePath(); ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(x+5,y-this.h*0.62); ctx.lineTo(x+23,y-this.h*0.62);
+      ctx.lineTo(x+21,y-this.h*0.49); ctx.lineTo(x+7,y-this.h*0.49);
+      ctx.closePath(); ctx.fill();
+      // ベース
+      ctx.fillStyle='#e05500';
+      ctx.beginPath(); ctx.roundRect(x-3,y-5,34,7,2); ctx.fill();
+    }
+  },
+  {
+    id:'box',label:'ダンボール',w:36,h:36,ground:true,
+    draw(x,y){
+      // 箱
+      ctx.fillStyle='#c8883a';
+      ctx.beginPath(); ctx.roundRect(x,y-this.h,this.w,this.h,3); ctx.fill();
+      // 上面の暗い部分
+      ctx.fillStyle='#a0662a';
+      ctx.beginPath(); ctx.roundRect(x,y-this.h,this.w,6,3); ctx.fill();
+      // テープ（十字）
+      ctx.fillStyle='#e8a84a';
+      ctx.fillRect(x+this.w/2-2,y-this.h,4,this.h);
+      ctx.fillRect(x,y-this.h/2-2,this.w,4);
+      // 影線
+      ctx.strokeStyle='rgba(0,0,0,0.1)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(x+4,y-this.h+10); ctx.lineTo(x+this.w-4,y-this.h+10); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x+4,y-this.h+18); ctx.lineTo(x+this.w-4,y-this.h+18); ctx.stroke();
+      // FRAGILE
+      ctx.fillStyle='#8b4513'; ctx.font='bold 6px sans-serif'; ctx.textAlign='center';
+      ctx.fillText('FRAGILE', x+this.w/2, y-this.h+28);
+    }
+  },
+  {
+    id:'bird',label:'鳥',w:44,h:48,ground:false,yOff:58,
+    wingPhase:0,
+    draw(x,y){
+      this.wingPhase=(this.wingPhase||0)+0.18;
+      const wingY=Math.sin(this.wingPhase)*8;
+      // 体
+      ctx.fillStyle='#5a7fd4';
+      ctx.beginPath(); ctx.ellipse(x+18,y,14,8,0,0,Math.PI*2); ctx.fill();
+      // 翼（左）
+      ctx.fillStyle='#3a5fb0';
+      ctx.beginPath();
+      ctx.moveTo(x+8,y); ctx.quadraticCurveTo(x+0,y-8+wingY,x-4,y-2+wingY);
+      ctx.quadraticCurveTo(x+4,y+2,x+8,y); ctx.fill();
+      // 翼（右）
+      ctx.beginPath();
+      ctx.moveTo(x+28,y); ctx.quadraticCurveTo(x+36,y-8+wingY,x+40,y-2+wingY);
+      ctx.quadraticCurveTo(x+32,y+2,x+28,y); ctx.fill();
+      // くちばし
+      ctx.fillStyle='#ffcc00';
+      ctx.beginPath(); ctx.moveTo(x+32,y-1); ctx.lineTo(x+38,y+1); ctx.lineTo(x+32,y+3); ctx.closePath(); ctx.fill();
+      // 目
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(x+26,y-2,3,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#1a1a1a';
+      ctx.beginPath(); ctx.arc(x+27,y-2,1.5,0,Math.PI*2); ctx.fill();
+    }
+  },
+];
+
+let obstacles=[],nextObstDist=290;
+function spawnObstacle(){
+  // コーンは連続2個出ることも
+  const t=OBS_TYPES[Math.floor(Math.random()*OBS_TYPES.length)];
+  const yOff=t.ground?0:(t.yOff||50);
+  const twin=t.id==='cone'&&speedMult>1.4&&Math.random()<0.25;
+  obstacles.push({...t,x:W+20,y:GROUND-yOff,twin});
+  if(twin) obstacles.push({...t,x:W+20+t.w+14,y:GROUND-yOff,twin:false,wingPhase:0});
+}
+
+// ===== BACKGROUND =====
+let clouds=[];
+for(let i=0;i<5;i++) clouds.push({x:Math.random()*W,y:10+Math.random()*40,w:50+Math.random()*55,sp:0.2+Math.random()*0.22});
+let groundX=0;
+
+// ===== PARTICLES =====
+let particles=[];
+function emitCollect(x,y){
+  for(let i=0;i<12;i++){
+    const a=(i/12)*Math.PI*2;
+    particles.push({x,y,vx:Math.cos(a)*2.8,vy:Math.sin(a)*2.8-0.5,life:36,maxLife:36,isText:false});
+  }
+  particles.push({x,y:y-8,vx:0,vy:-1.3,life:45,maxLife:45,isText:true,text:'+1pt'});
+}
+
+let flashAlpha=0;
+
+// ===== DRAW BG =====
+function drawBG(){
+  const grd=ctx.createLinearGradient(0,0,0,GROUND);
+  grd.addColorStop(0,'#cddcff'); grd.addColorStop(1,'#eef4ff');
+  ctx.fillStyle=grd; ctx.fillRect(0,0,W,H);
+  for(const c of clouds){
+    ctx.fillStyle='rgba(255,255,255,0.85)';
+    ctx.beginPath(); ctx.ellipse(c.x+c.w/2,c.y,c.w/2,13,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(c.x+c.w*0.3,c.y+5,c.w*0.28,10,0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(c.x+c.w*0.7,c.y+5,c.w*0.28,10,0,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawGround(){
+  const grd2=ctx.createLinearGradient(0,GROUND,0,H);
+  grd2.addColorStop(0,'#285ac8'); grd2.addColorStop(1,'#1a3a8a');
+  ctx.fillStyle=grd2; ctx.fillRect(0,GROUND,W,H-GROUND);
+  ctx.strokeStyle='rgba(115,165,255,0.4)'; ctx.lineWidth=1;
+  for(let i=0;i<14;i++){
+    const x=((groundX+i*58)%(W+58))-58;
+    ctx.beginPath(); ctx.moveTo(x,GROUND); ctx.lineTo(x+36,GROUND); ctx.stroke();
+  }
+}
+
+function drawReceipts(){
+  for(const r of receipts){
+    if(r.collected) continue;
+    r.pulse+=0.09;
+    const glow=12+Math.sin(r.pulse)*5;
+    ctx.save();
+    // 白く光る
+    ctx.shadowColor='#ffffff'; ctx.shadowBlur=glow+8;
+    ctx.fillStyle='#ffffff';
+    ctx.beginPath(); ctx.roundRect(r.x-r.r,r.y-r.r*1.5,r.r*2,r.r*3,3); ctx.fill();
+    ctx.shadowColor='rgba(200,220,255,0.9)'; ctx.shadowBlur=glow;
+    ctx.strokeStyle='rgba(180,210,255,0.8)'; ctx.lineWidth=2;
+    ctx.stroke();
+    ctx.shadowBlur=0;
+    // 罫線
+    ctx.strokeStyle='rgba(180,200,240,0.6)'; ctx.lineWidth=1;
+    for(let i=1;i<=3;i++){
+      ctx.beginPath();
+      ctx.moveTo(r.x-r.r+3,r.y-r.r*1.5+i*8);
+      ctx.lineTo(r.x+r.r-3,r.y-r.r*1.5+i*8);
+      ctx.stroke();
+    }
+    // 「領」マーク
+    ctx.fillStyle='#73a5ff'; ctx.font='bold 9px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('領', r.x, r.y+4);
+    ctx.restore();
+  }
+}
+
+function drawObstacles(){
+  for(const o of obstacles){
+    ctx.save(); o.draw(o.x,o.y); ctx.restore();
+  }
+}
+
+function drawParticles(){
+  for(const p of particles){
+    const alpha=p.life/p.maxLife;
+    ctx.globalAlpha=alpha;
+    if(p.isText){
+      ctx.fillStyle='#285ac8'; ctx.font='bold 13px "Noto Sans JP",sans-serif'; ctx.textAlign='center';
+      ctx.fillText(p.text,p.x,p.y);
+    } else {
+      ctx.fillStyle='#b0d0ff';
+      ctx.beginPath(); ctx.arc(p.x,p.y,2.5,0,Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.globalAlpha=1;
+}
+
+function drawHUD(){
+  // スコア表示
+  ctx.fillStyle='rgba(40,90,200,0.10)';
+  ctx.beginPath(); ctx.roundRect(W-152,4,148,24,4); ctx.fill();
+  ctx.fillStyle='#285ac8'; ctx.font='bold 12px "Noto Sans JP",sans-serif'; ctx.textAlign='right';
+  ctx.fillText(String(Math.floor(score)).padStart(6,'0')+' pt', W-8, 21);
+}
+
+function drawGameOver(){
+  const cy = H/2;
+  ctx.fillStyle='rgba(238,244,255,0.92)'; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle='#e84040'; ctx.font='bold 20px "Noto Sans JP",sans-serif'; ctx.textAlign='center';
+  ctx.fillText('💦 あっ…つまずいた！', W/2, cy-24);
+  ctx.fillStyle='#285ac8'; ctx.font='bold 13px sans-serif';
+  ctx.fillText('スペース / タップ でリスタート', W/2, cy+4);
+  ctx.fillStyle='#888'; ctx.font='11px sans-serif';
+  ctx.fillText(Math.floor(score)+'pt  領収書 '+collected+'枚  ベスト '+Math.floor(best)+'pt', W/2, cy+26);
+}
+
+// ===== COLLISION =====
+function collidesObs(o){
+  const pad=8;
+  const ax1=keiri.x+pad, ax2=keiri.x+keiri.w-pad;
+  const ay1=keiri.y-keiri.h+(keiri.ducking?14:0)+pad, ay2=keiri.y-pad;
+  // 鳥は y を中心に描画されているので上下に h/2 ずつ
+  const by1 = o.id==='bird' ? o.y - o.h/2 : o.y - o.h;
+  const by2 = o.id==='bird' ? o.y + o.h/2 : o.y;
+  const bx1=o.x+4, bx2=o.x+o.w-4;
+  return ax1<bx2&&ax2>bx1&&ay1<by2&&ay2>by1;
+}
+function collidesReceipt(r){
+  return r.x+r.r>keiri.x&&r.x-r.r<keiri.x+keiri.w&&
+         r.y+r.r*1.5>keiri.y-keiri.h&&r.y-r.r*1.5<keiri.y;
+}
+
+// ===== UPDATE =====
+function update(){
+  frame++;
+  score+=0.15*speedMult;
+  speedMult=1+Math.floor(score/500)*0.1;
+  if(speedMult>2.5) speedMult=2.5;
+  speed=baseSpeed*speedMult;
+
+  document.getElementById('score').textContent=Math.floor(score);
+  document.getElementById('spd').textContent='×'+speedMult.toFixed(1);
+
+  keiri.vy+=GRAVITY; keiri.y+=keiri.vy;
+  if(keiri.y>=GROUND){keiri.y=GROUND;keiri.vy=0;keiri.onGround=true;keiri.jumpCount=0;}
+  if(keiri.onGround&&!keiri.ducking) keiri.legPhase+=speed*0.75;
+
+  keiri.blinkTimer++;
+  if(keiri.blinkTimer>110) keiri.blinking=true;
+  if(keiri.blinkTimer>117){keiri.blinking=false;keiri.blinkTimer=0;}
+
+  groundX-=speed;
+  for(const c of clouds){c.x-=c.sp; if(c.x+c.w<0) c.x=W+10;}
+
+  nextReceiptDist-=speed;
+  if(nextReceiptDist<=0){spawnReceipt();nextReceiptDist=90+Math.random()*130;}
+  for(let i=receipts.length-1;i>=0;i--){
+    const r=receipts[i]; r.x-=speed;
+    if(r.x<-20){receipts.splice(i,1);continue;}
+    if(!r.collected&&collidesReceipt(r)){
+      r.collected=true; collected++; score+=1;
+      emitCollect(r.x,r.y);
+      document.getElementById('collected').textContent=collected;
+      document.getElementById('score').textContent=Math.floor(score);
+    }
+  }
+
+  nextObstDist-=speed;
+  if(nextObstDist<=0){spawnObstacle();nextObstDist=200+Math.random()*270/speedMult;}
+  for(let i=obstacles.length-1;i>=0;i--){
+    const o=obstacles[i]; o.x-=speed;
+    if(o.x+o.w<-50){obstacles.splice(i,1);continue;}
+    if(collidesObs(o)){die();return;}
+  }
+
+  for(let i=particles.length-1;i>=0;i--){
+    const p=particles[i]; p.x+=p.vx; p.y+=p.vy; p.vy+=0.08; p.life--;
+    if(p.life<=0) particles.splice(i,1);
+  }
+  if(flashAlpha>0) flashAlpha-=0.05;
+}
+
+function die(){
+  state='dead'; flashAlpha=0.55;
+  if(score>best){best=score;document.getElementById('best').textContent=Math.floor(best);}
+}
+
+function reset(){
+  score=0;frame=0;speedMult=1;speed=baseSpeed;collected=0;
+  keiri.y=GROUND;keiri.vy=0;keiri.onGround=true;
+  keiri.ducking=false;keiri.h=66;keiri.jumpCount=0;keiri.legPhase=0;
+  obstacles=[];receipts=[];particles=[];flashAlpha=0;
+  nextObstDist=300;nextReceiptDist=160;
+  document.getElementById('score').textContent='0';
+  document.getElementById('collected').textContent='0';
+  document.getElementById('spd').textContent='×1.0';
+  state='running';
+}
+
+// ===== LOOP =====
+function loop(){
+  ctx.clearRect(0,0,W,H);
+  drawBG(); drawGround();
+  if(state==='running') update();
+  drawReceipts(); drawObstacles(); drawKeiri(); drawParticles(); drawHUD();
+  if(flashAlpha>0){ctx.fillStyle=`rgba(232,64,64,${flashAlpha})`;ctx.fillRect(0,0,W,H);}
+  if(state==='dead') drawGameOver();
+  requestAnimationFrame(loop);
+}
+
+// ===== INPUT =====
+function handleStart(){
+  if(state==='idle'){document.getElementById('overlay').classList.add('hidden');reset();}
+  else if(state==='dead') reset();
+  else jump();
+}
+
+document.getElementById('start-btn').addEventListener('click',()=>{
+  document.getElementById('overlay').classList.add('hidden'); reset();
+});
+
+// キーボード
+window.addEventListener('keydown',e=>{
+  if(e.code==='Space'||e.code==='ArrowUp'){e.preventDefault();handleStart();}
+  if(e.code==='ArrowDown'){e.preventDefault();duck(true);}
+});
+window.addEventListener('keyup',e=>{if(e.code==='ArrowDown') duck(false);});
+
+// タッチ：どこでもタップ→ジャンプ、長押し→しゃがむ
+let duckTimer = null;
+const LONG_PRESS_MS = 180; // 長押し判定ミリ秒
+
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  if(state==='idle'||state==='dead'){handleStart();return;}
+  // 長押しタイマーセット
+  duckTimer = setTimeout(()=>{ duckTimer=null; duck(true); }, LONG_PRESS_MS);
+}, {passive:false});
+
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if(duckTimer !== null){
+    // 短いタップ → ジャンプ
+    clearTimeout(duckTimer); duckTimer=null;
+    jump();
+  } else {
+    // 長押し解除 → しゃがみ戻す
+    duck(false);
+  }
+}, {passive:false});
+
+canvas.addEventListener('touchcancel', e => {
+  if(duckTimer!==null){clearTimeout(duckTimer);duckTimer=null;}
+  duck(false);
+}, {passive:false});
+
+loop();
+</script>
+</body>
+</html>
