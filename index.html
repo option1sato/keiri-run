@@ -4,41 +4,35 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>はしれ！経理さん！</title>
-<!-- LIFF SDK -->
 <script charset="utf-8" src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
-<!-- React + Babel (JSX in browser) -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
-
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
   * { margin:0; padding:0; box-sizing:border-box; }
-  body { background:#eef4ff; font-family:'Noto Sans JP',sans-serif; }
+  body {
+    background:#eef4ff;
+    font-family:'Noto Sans JP',sans-serif;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    user-select: none;
+    touch-action: manipulation;
+  }
+  canvas { touch-action: none; }
+  button { -webkit-tap-highlight-color: transparent; }
 </style>
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700;900&display=swap" rel="stylesheet">
 </head>
 <body>
 <div id="root"></div>
-
 <script>
-const {
-  useState,
-  useEffect,
-  useRef,
-  useCallback
-} = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
 // ============================================================
 // CONFIG
 // ============================================================
-// ★ 以下の2つを実際の値に変更してください
-const RENDER_BASE_URL = 'https://line-webhook-xxxx.onrender.com'; // RenderサーバーのURL
-const LIFF_ID = '1657887190-r3uON8GQ'; // LIFF ID
-
-// ============================================================
-// LIFF & API HELPERS
-// ============================================================
-let liffProfile = null; // { userId, displayName }
-
+const RENDER_BASE_URL = 'https://line-webhook-ykji.onrender.com';
+const LIFF_ID = '1657887190-r3uON8GQ';
+let liffProfile = null;
 async function initLiff() {
   try {
     if (typeof liff !== 'undefined') {
@@ -51,13 +45,9 @@ async function initLiff() {
           userId: profile.userId,
           displayName: profile.displayName
         };
-      } else {
-        // LINEブラウザ以外ではログイン不要（名前は手入力）
-        liffProfile = null;
       }
     }
   } catch (e) {
-    console.warn('LIFF init failed:', e);
     liffProfile = null;
   }
 }
@@ -69,7 +59,6 @@ async function savePlayerName(name) {
   localStorage.setItem('keiri_player_name', name);
 }
 async function loadScores() {
-  // ランキングパネル表示用にAPIから取得（filterByPeriodを通さず直接返す）
   return [];
 }
 async function loadRanking(period) {
@@ -78,27 +67,12 @@ async function loadRanking(period) {
     const data = await res.json();
     return data.ok ? data.scores : [];
   } catch (e) {
-    console.error('loadRanking error:', e);
     return [];
   }
 }
 async function saveScore(entry) {
   try {
-    await fetch(`${RENDER_BASE_URL}/api/ranking`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: entry.name,
-        score: entry.score,
-        collected: entry.collected,
-        period: entry.period || 'daily',
-        lineUserId: liffProfile?.userId || ''
-      })
-    });
-    // マンスリーにも同時登録
-    if (!entry.period || entry.period === 'daily') {
+    for (const p of ['daily', 'monthly']) {
       await fetch(`${RENDER_BASE_URL}/api/ranking`, {
         method: 'POST',
         headers: {
@@ -108,7 +82,7 @@ async function saveScore(entry) {
           name: entry.name,
           score: entry.score,
           collected: entry.collected,
-          period: 'monthly',
+          period: p,
           lineUserId: liffProfile?.userId || ''
         })
       });
@@ -118,7 +92,6 @@ async function saveScore(entry) {
   }
 }
 function filterByPeriod(scores, period) {
-  // APIから直接取得するので、このフィルタは使わない
   const now = Date.now();
   const ms = {
     daily: 86400000,
@@ -686,9 +659,10 @@ function drawCharacter(ctx, k, frame) {
 // RANKING PANEL
 // ============================================================
 function RankingPanel({
-  onClose
+  onClose,
+  initialTab = 'daily'
 }) {
-  const [tab, setTab] = useState('daily');
+  const [tab, setTab] = useState(initialTab);
   const [allScores, setAllScores] = useState({
     daily: [],
     monthly: []
@@ -902,8 +876,8 @@ function RankingPanel({
 
 // ランキング順位を取得（全期間の中で最も良い順位を返す）
 async function getRankAfterSave(score) {
-  let bestRank = null;
-  let bestPeriod = null;
+  let bestRank = null,
+    bestPeriod = null;
   for (const p of ['daily', 'monthly']) {
     const ranked = await loadRanking(p);
     const idx = ranked.findIndex(s => s.score <= score);
@@ -1151,7 +1125,8 @@ function NameInput({
   collected,
   savedName,
   onSubmit,
-  onSkip
+  onSkip,
+  onOpenRanking
 }) {
   const [name, setName] = useState(savedName || '');
   const isFirstTime = !savedName;
@@ -1406,73 +1381,32 @@ function NameInput({
       fontFamily: 'inherit',
       boxShadow: '0 4px 14px rgba(40,90,200,0.3)'
     }
-  }, "\uD83D\uDD25 \u3082\u3046\u4E00\u5EA6\u30C1\u30E3\u30EC\u30F3\u30B8\uFF01")), !isEligible && /*#__PURE__*/React.createElement("div", {
+  }, "\uD83D\uDD25 \u3082\u3046\u4E00\u5EA6\u30C1\u30E3\u30EC\u30F3\u30B8\uFF01")), !isEligible && /*#__PURE__*/React.createElement("button", {
+    onClick: () => onOpenRanking && onOpenRanking('daily'),
     style: {
-      width: '100%'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
+      width: '100%',
       background: '#eef4ff',
-      borderRadius: 10,
-      padding: '10px 14px',
-      textAlign: 'center'
-    }
-  }, /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 12,
-      fontWeight: 700,
-      color: '#285ac8',
-      marginBottom: 6
-    }
-  }, "\uD83C\uDFC6 \u30E9\u30F3\u30AD\u30F3\u30B0\u306E\u4ED5\u7D44\u307F"), /*#__PURE__*/React.createElement("div", {
-    style: {
-      display: 'flex',
-      gap: 8,
-      justifyContent: 'center'
-    }
-  }, [{
-    icon: '📅',
-    label: 'デイリー',
-    sub: '毎日リセット'
-  }, {
-    icon: '🗓️',
-    label: 'マンスリー',
-    sub: '毎月リセット'
-  }].map(t => /*#__PURE__*/React.createElement("div", {
-    key: t.label,
-    style: {
-      flex: 1,
-      background: '#fff',
-      borderRadius: 8,
       border: '1.5px solid #c8d8f0',
-      padding: '8px 4px',
+      borderRadius: 10,
+      padding: '12px 0',
+      cursor: 'pointer',
+      fontFamily: 'inherit',
       display: 'flex',
-      flexDirection: 'column',
       alignItems: 'center',
-      gap: 2
+      justifyContent: 'center',
+      gap: 6
     }
   }, /*#__PURE__*/React.createElement("span", {
     style: {
       fontSize: 16
     }
-  }, t.icon), /*#__PURE__*/React.createElement("span", {
+  }, "\uD83C\uDFC6"), /*#__PURE__*/React.createElement("span", {
     style: {
-      fontSize: 11,
+      fontSize: 13,
       fontWeight: 700,
       color: '#285ac8'
     }
-  }, t.label), /*#__PURE__*/React.createElement("span", {
-    style: {
-      fontSize: 9,
-      color: '#aaa'
-    }
-  }, t.sub)))), /*#__PURE__*/React.createElement("div", {
-    style: {
-      fontSize: 9,
-      color: '#aaa',
-      marginTop: 6
-    }
-  }, RANKING_THRESHOLD, "pt\u4EE5\u4E0A\u3067\u767B\u9332\u3055\u308C\u307E\u3059")))));
+  }, "\u30E9\u30F3\u30AD\u30F3\u30B0\u3092\u898B\u308B"))));
 }
 
 // ============================================================
@@ -1484,13 +1418,13 @@ function App() {
   const [lastScore, setLastScore] = useState(0);
   const [lastCollected, setLastCollected] = useState(0);
   const [showRanking, setShowRanking] = useState(false);
+  const [rankingInitTab, setRankingInitTab] = useState('daily');
   const [hudScore, setHudScore] = useState(0);
   const [hudCollected, setHudCollected] = useState(0);
   const [best, setBest] = useState(0);
   const [savedName, setSavedName] = useState('');
   const [celebration, setCelebration] = useState(null); // { rank, period, name, score }
 
-  // 起動時: LIFF初期化 → 名前読み込み
   useEffect(() => {
     initLiff().then(() => loadPlayerName()).then(n => setSavedName(n));
   }, []);
@@ -1535,8 +1469,7 @@ function App() {
         name,
         score: lastScore,
         collected: lastCollected,
-        ts: Date.now(),
-        period: 'daily'
+        ts: Date.now()
       });
       const {
         rank,
@@ -1776,13 +1709,18 @@ function App() {
       textAlign: 'center'
     }
   }, "\uD83D\uDCF1 \u30BF\u30C3\u30D7 = \u30B8\u30E3\u30F3\u30D7 \xA0|\xA0 \u9577\u62BC\u3057 = \u3057\u3083\u304C\u3080"), showRanking && /*#__PURE__*/React.createElement(RankingPanel, {
+    initialTab: rankingInitTab,
     onClose: () => setShowRanking(false)
   }), phase === 'nameInput' && /*#__PURE__*/React.createElement(NameInput, {
     score: lastScore,
     collected: lastCollected,
     savedName: savedName,
     onSubmit: handleSubmitName,
-    onSkip: handleSkip
+    onSkip: handleSkip,
+    onOpenRanking: tab => {
+      setRankingInitTab(tab);
+      setShowRanking(true);
+    }
   }), celebration && /*#__PURE__*/React.createElement(Celebration, {
     rank: celebration.rank,
     period: celebration.period,
@@ -1791,9 +1729,9 @@ function App() {
     onClose: handleCelebrationClose
   }));
 }
-const root = ReactDOM.createRoot(document.getElementById('root'));
-root.render(/*#__PURE__*/React.createElement(App, null));
 
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(React.createElement(App, null));
 </script>
 </body>
 </html>
