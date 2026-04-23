@@ -1444,11 +1444,35 @@ function App() {
     }, 100);
     return () => clearInterval(id);
   }, [phase]);
-  const handleDie = useCallback((score, collected) => {
+  const handleDie = useCallback(async (score, collected) => {
     setLastScore(score);
     setLastCollected(collected);
     setBest(b => Math.max(b, score));
     setPhase('nameInput');
+    // ゲームオーバー時に全プレイ履歴を即座に保存（名前はsavedNameを使用）
+    // 500pt未満もログとして保存、500pt以上はis_rankingがtrueになる
+    const playerName = typeof liffProfile !== 'undefined' && liffProfile?.displayName ? liffProfile.displayName : localStorage.getItem('keiri_player_name') || 'プレイヤー';
+    try {
+      for (const p of ['daily', 'monthly']) {
+        const res = await fetch(`${RENDER_BASE_URL}/api/ranking`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            name: playerName,
+            score,
+            collected,
+            period: p,
+            lineUserId: liffProfile?.userId || ''
+          })
+        });
+        const data = await res.json();
+        console.log(`[handleDie] 保存完了 period=${p}:`, data);
+      }
+    } catch (e) {
+      console.error('[handleDie] 保存エラー:', e);
+    }
   }, []);
   const {
     jump,
@@ -1468,14 +1492,8 @@ function App() {
   const handleSubmitName = useCallback(async name => {
     await savePlayerName(name);
     setSavedName(name);
-    // 500pt以上のみランキングに保存
+    // ランキング圏内かチェック（保存はhandleDie時に実施済み）
     if (lastScore >= RANKING_THRESHOLD) {
-      await saveScore({
-        name,
-        score: lastScore,
-        collected: lastCollected,
-        ts: Date.now()
-      });
       const {
         rank,
         period
