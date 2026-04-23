@@ -72,23 +72,28 @@ async function loadRanking(period) {
 }
 async function saveScore(entry) {
   try {
+    console.log('[saveScore] 送信開始:', entry.name, entry.score);
     for (const p of ['daily', 'monthly']) {
-      await fetch(`${RENDER_BASE_URL}/api/ranking`, {
+      const payload = {
+        name: entry.name,
+        score: entry.score,
+        collected: entry.collected,
+        period: p,
+        lineUserId: liffProfile?.userId || ''
+      };
+      console.log(`[saveScore] POST period=${p}`, payload);
+      const res = await fetch(`${RENDER_BASE_URL}/api/ranking`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({
-          name: entry.name,
-          score: entry.score,
-          collected: entry.collected,
-          period: p,
-          lineUserId: liffProfile?.userId || ''
-        })
+        body: JSON.stringify(payload)
       });
+      const data = await res.json();
+      console.log(`[saveScore] レスポンス period=${p}:`, data);
     }
   } catch (e) {
-    console.error('saveScore error:', e);
+    console.error('[saveScore] エラー:', e);
   }
 }
 function filterByPeriod(scores, period) {
