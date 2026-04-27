@@ -79,7 +79,8 @@ async function saveScore(entry) {
         score: entry.score,
         collected: entry.collected,
         period: p,
-        lineUserId: liffProfile?.userId || ''
+        lineUserId: liffProfile?.userId || '',
+        playedAt: new Date().toISOString()
       };
       console.log(`[saveScore] POST period=${p}`, payload);
       const res = await fetch(`${RENDER_BASE_URL}/api/ranking`, {
